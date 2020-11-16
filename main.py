@@ -150,7 +150,7 @@ class EmberParser:
         ]
         return vector
 
-    def get_num_of_bak_sections(self): # 0.9426 -> 0.9432로 증가
+    def get_num_of_bak_sections(self): # ①0.9426 0.9510 ②0.9432 0.9510
         section = self.report["section"]
         sections = section['sections']
 
@@ -178,11 +178,121 @@ class PestudioParser:
     '''
     
     def __init__(self, path):
-        self.report = read_json(path)
+        try:
+            self.report = read_json(path)
+        except:
+            self.report = None
         self.vector = []
+
+    def get_entropy(self):
+        try:
+            entropy = float(self.report["image"]["overview"]["entropy"])
+        except:
+            entropy = -1.0
+        
+        return [entropy]
+
+    def get_network_run_from_swap(self):
+        try:
+            network_run_from_swap = self.report["image"]["file-header"]["network-run-from-swap"]
+            if network_run_from_swap == "true":
+                result = 1
+            else:
+                result = 0
+        except:
+            result = -1
+        
+        return [result]
+
+    def get_control_flow_guard(self):
+        try:
+            control_flow_guard = self.report["image"]["optional-header"]["control-flow-guard"]
+            if control_flow_guard == "true":
+                result = 1
+            else:
+                result = 0
+        except:
+            result = -1
+        
+        return [result]
+
+    def get_section_info(self):
+        try:
+            section_num = self.report["image"]["file-header"]["sections"] # warning, int()로 감싸주면 warning 없어짐, 대신 정확도 낮아짐
+        except:
+            section_num = -1
+
+        try:
+            sections = self.report["image"]["sections"]["section"]
+
+            max_entropy = 0.0
+            min_entropy = 100.0
+            for section in sections:
+                max_entropy = max( max_entropy, float(section["@entropy"]) )
+                min_entropy = min( min_entropy, float(section["@entropy"]) )
+                if(section["@executable"] == "x"):
+                    executable = 1
+                else:
+                    executable = 0
+        except:
+            max_entropy, min_entropy, executable = -1.0, -1.0, -1.0
+        
+        return [section_num, max_entropy, min_entropy, executable]
+
+    def get_blacklist(self):
+        try:
+            sections = self.report["image"]["sections"]["section"]
+            blacklist_section_cnt = 0
+            
+            for section in sections:
+                if section["@blacklisted"] == "x":
+                    blacklist_section_cnt += 1
+        except:
+            blacklist_section_cnt = -1
+
+        try:
+            libraries = self.report["image"]["libraries"]["library"]
+            blacklist_libraries_cnt = 0
+
+            for library in libraries:
+                if library["@blacklist"] == "x":
+                    blacklist_libraries_cnt += 1
+        except:
+            blacklist_libraries_cnt = -1
+
+        try:
+            imports = self.report["image"]["imports"]["import"]
+            blacklist_import_cnt = 0
+
+            for imported in imports:
+                if imported["@blacklist"] == "x":
+                    blacklist_import_cnt += 1
+        except:
+            blacklist_import_cnt = -1
+
+        return [blacklist_section_cnt, blacklist_libraries_cnt, blacklist_import_cnt]
+
+    def get_virustotal(self):
+        try:
+            if self.report["image"]["virustotal"] != "offline":
+                result = 1
+            else:
+                result = 0
+        except:
+            result = -1
+
+        return [result]
     
     def process_report(self):
-        pass
+        vector = []
+        vector += self.get_entropy() # ③0.9417 0.9517
+        vector += self.get_network_run_from_swap() # ④0.9431 0.9517
+        vector += self.get_control_flow_guard() # ⑤0.9424 0.9517
+        vector += self.get_section_info() # ⑥0.9438 0.9539
+        vector += self.get_blacklist() # ⑦0.9426 0.9545
+        vector += self.get_virustotal() # ⑧0.9428 0.9545
+
+        return vector
 
 def feature_label_extract(directory,filename):
     # ## 레이블 테이블 로드
@@ -206,12 +316,14 @@ def feature_label_extract(directory,filename):
     for fname in sha:
         feature_vector = []
         label = label_table[fname]
-        for data in ["PEMINER", "EMBER"]:
+        for data in ["PEMINER", "EMBER", "PESTUDIO"]:
             path = f"{data}/{directory}/{fname}.json"
             if data == "PEMINER":
                 feature_vector += PeminerParser(path).process_report()
-            else:
+            elif data == "EMBER":
                 feature_vector += EmberParser(path).process_report()
+            else:
+                feature_vector += PestudioParser(path).process_report()
         X.append(feature_vector)
         y.append(label)
         sha_test.append(fname) # here@@@@@@@@@@@@@@@@@@@@@@@@
